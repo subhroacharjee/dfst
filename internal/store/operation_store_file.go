@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,7 +89,7 @@ func (s *PeerStore) StoreFile(path string) error {
 		"FILEID":    fileChecksum,
 		"CHUNKSIZE": chunkSize,
 		"NOCHUNKS":  noOfChunks,
-		"CHUNKIDS":  chunkIds,
+		"CHUNKIDS":  strings.Join(chunkIds, ","),
 	}
 
 	if err := s.ResyncPeer(RESYNCFILE, resyncPacketMap); err != nil {

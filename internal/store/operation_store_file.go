@@ -85,14 +85,9 @@ func (s *PeerStore) StoreFile(path string) error {
 	// need to resync file checksum and all the chunks so that all nodes are aware
 	// of it
 
-	resyncPacketMap := map[string]any{
-		"FILEID":    fileChecksum,
-		"CHUNKSIZE": chunkSize,
-		"NOCHUNKS":  noOfChunks,
-		"CHUNKIDS":  strings.Join(chunkIds, ","),
-	}
+	operation, resyncPayload := CreateResyncFilePacket(fileChecksum, chunkSize, int64(noOfChunks), strings.Join(chunkIds, ","))
 
-	if err := s.ResyncPeer(RESYNCFILE, resyncPacketMap); err != nil {
+	if err := s.ResyncPeer(operation, resyncPayload); err != nil {
 		return err
 	}
 	var wg sync.WaitGroup
@@ -109,7 +104,7 @@ func (s *PeerStore) StoreFile(path string) error {
 			defer subsriber.Unsubscribe()
 
 			// Broadcast the MESSAGE (NTS chunksize)
-			if s.BroadcastNTS(cid, len(chunk)) {
+			if s.BroadcastNTS(MakeNTSPacket(cid, len(chunk))) {
 				return
 			}
 			for {
@@ -133,43 +128,22 @@ func (s *PeerStore) StoreFile(path string) error {
 }
 
 func (s *PeerStore) validateMsgAndSendWrite(msg broadcaster.Message, chunk []byte, cid string) bool {
-	var recievedMsgPayload map[string]any
+	var recievedMsgPayload NTSOkPayload
 	if err := json.Unmarshal(msg.Payload, &recievedMsgPayload); err != nil {
 		return false
 	}
 
-	opVal, ok := recievedMsgPayload["OPERATION"]
-	if !ok {
-		return false
-	}
-	opFloat, ok := opVal.(float64)
-	if !ok {
-		return false
-	}
-	op := OPERATION(uint(opFloat)) // Proper conversion to your custom type
-
-	cidVal, ok := recievedMsgPayload["CID"]
-	if !ok {
-		return false
-	}
-	rcid, ok := cidVal.(string)
-	if !ok {
-		return false
-	}
-
 	// Perform the logic
-	if op != NTS_OK || rcid != cid {
+	if recievedMsgPayload.Operation != NTS_OK || recievedMsgPayload.CID != cid {
 		return false
 	}
+
 	logger.Debug("\n\nRECIEVED NTS_OK msgId: %s \n", cid[len(cid)-1:])
 	pid := msg.From
 
-	pld := make(map[string]any)
-	pld["OPERATION"] = WRITE
-	pld["CHUNK"] = chunk
-	pld["CID"] = rcid
+	pld := NewWritePayload(chunk, cid)
 
-	pldPacket, err := json.Marshal(pld)
+	pldPacket, err := pld.Marshal()
 	if err != nil {
 		logger.Error("Cant write the packet: %v", err)
 		return true
@@ -188,10 +162,9 @@ func (s *PeerStore) validateMsgAndSendWrite(msg broadcaster.Message, chunk []byt
 		return false
 	}
 
-	s.ResyncPeer(RESYNCMEM, map[string]any{
-		"CID":    cid,
-		"NODEID": msg.From,
-	})
+	operation, resyncPayload := CreateResyncMemPacket(cid, msg.From)
+
+	s.ResyncPeer(operation, resyncPayload)
 
 	logger.Debug("validateMsgAndSendWrite successful msgId %s", cid[len(cid)-1:])
 	return true

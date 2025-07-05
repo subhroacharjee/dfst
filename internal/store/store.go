@@ -1,9 +1,12 @@
 package store
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 
+	"github.com/subhroacharjee/dfst/internal/broadcaster"
 	"github.com/subhroacharjee/dfst/internal/kvstore"
 	"github.com/subhroacharjee/dfst/internal/logger"
 	"github.com/subhroacharjee/dfst/internal/p2p"
@@ -20,6 +23,10 @@ type (
 	PeerStore struct {
 		StoreOpts
 		rootPath string
+	}
+
+	StorePacket struct {
+		Operation OPERATION `json:"operation"`
 	}
 )
 
@@ -52,4 +59,89 @@ func (p *PeerStore) SetPath(path string) error {
 	}
 	p.rootPath = rootPath
 	return nil
+}
+
+func (p *PeerStore) SetupTransport() error {
+	panic("unimplemented")
+}
+
+func (p *PeerStore) Start() error {
+	if err := p.SetupTransport(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *PeerStore) ConsumeAndOperate(ctx context.Context) {
+	msgChan := p.Transport.Subsribe().Consume()
+	for {
+		select {
+		case <-ctx.Done():
+			// call shutdown on message queue.
+		case msg := <-msgChan:
+			go p.handleMessage(&msg)
+		}
+	}
+}
+
+func (p *PeerStore) handleMessage(msg *broadcaster.Message) {
+	msg.Acknowledge()
+	var payload map[string]any
+
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		logger.Error("error Unmarshalling the payload: %v", err)
+		return
+	}
+
+	operation, exists := payload["operation"]
+	if !exists {
+		logger.Error("Invalid message packet found")
+		return
+	}
+
+	operation, ok := operation.(float64)
+	if !ok {
+		logger.Error("Invalid operation type")
+		return
+	}
+	op, ok := operation.(OPERATION)
+	if !ok {
+		logger.Error("Invalid operation type")
+		return
+	}
+
+	if op == RESYNC {
+		var resyncPayload ResyncPayload
+		if err := json.Unmarshal(msg.Payload, &resyncPayload); err != nil {
+			logger.Error("Invalid resync payload, Unmarshal error: %v", err)
+			return
+		}
+
+		if err := p.HandleResyncPeer(resyncPayload); err != nil {
+			logger.Error("Error handle resync peer: %v", err)
+			return
+		}
+
+	} else if op == NTS {
+		var ntsPayload NTSPayload
+		if err := json.Unmarshal(msg.Payload, &ntsPayload); err != nil {
+			logger.Error("Invalid nts payload, unmarshal error: %v", err)
+			return
+		}
+		p.HandleNTS(func(packet []byte) error {
+			return p.Transport.Send(msg.From, packet)
+		}, ntsPayload)
+	} else if op == WRITE {
+		var writePayload WritePayload
+		if err := json.Unmarshal(msg.Payload, &writePayload); err != nil {
+			logger.Error("Invalid write payload, unmarshal error: %v", err)
+			return
+		}
+		if err := p.Write(writePayload); err != nil {
+			// TODO: add support to propagate this error to all peers
+			logger.Error("Error in writing chunk: %v", err)
+			return
+		}
+	}
 }

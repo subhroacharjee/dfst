@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -91,7 +92,6 @@ func TestStore(t *testing.T) {
 		broadcastedMsgs: make([]broadcaster.Message, 0),
 		sentMsgs:        make(map[string]map[string]any),
 	}
-	defer mockTransport.Shutdown(cancel)
 
 	opts := StoreOpts{
 		ChunkSize: CHUNK_SIZE,
@@ -107,7 +107,12 @@ func TestStore(t *testing.T) {
 	if err != nil {
 		t.Errorf("%v : %v", reflect.TypeOf(err), err)
 	}
-	defer os.RemoveAll("./tmp")
+
+	t.Cleanup(func() {
+		mockTransport.Shutdown(cancel)
+		os.RemoveAll("./tmp")
+		os.RemoveAll(store.rootPath)
+	})
 
 	go mockTransport.sendNTSOkReply(NO_OF_CHUNKS)
 
@@ -119,6 +124,56 @@ func TestStore(t *testing.T) {
 
 	assert.Equal(t, int(NO_OF_CHUNKS)*2+1, len(mockTransport.broadcastedMsgs))
 	assert.Equal(t, int(NO_OF_CHUNKS), len(mockTransport.sentMsgs))
+
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(NO_OF_CHUNKS)))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	counter := 0
+	var msg map[string]any
+
+	for _, val := range mockTransport.sentMsgs {
+		counter++
+		if counter == int(n.Int64()) {
+			msg = val
+			break
+		}
+	}
+
+	bt, err := json.Marshal(msg)
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+	var wtpld WritePayload
+
+	if err := json.Unmarshal(bt, &wtpld); err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+
+	if err := store.Write(wtpld); err != nil {
+		t.Errorf("Error occured during writing chunk: %v", err)
+		t.Fail()
+	}
+
+	absPath, err := filepath.Abs(filepath.Join(store.rootPath, wtpld.CID, fmt.Sprintf("%s.cnk", wtpld.CID)))
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+
+	if _, err := os.Stat(absPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			t.Errorf("The required file doesnt exists")
+			t.Fail()
+		} else {
+			t.Errorf("Some other error %v", err)
+			t.Fail()
+		}
+	}
 }
 
 func (m *MockTransport) sendNTSOkReply(noOfChunks uint64) {
@@ -154,7 +209,7 @@ func (m *MockTransport) sendNTSOkReply(noOfChunks uint64) {
 				fmt.Println("error", err)
 				return
 			}
-			val, exists := originalMap["OPERATION"]
+			val, exists := originalMap["operation"]
 			if !exists {
 				return
 			}
@@ -162,13 +217,9 @@ func (m *MockTransport) sendNTSOkReply(noOfChunks uint64) {
 
 			if ok && OPERATION(operation) == NTS {
 
-				replyMessage := make(map[string]any)
-				cid := originalMap["CID"].(string)
+				cid, _ := originalMap["cid"].(string)
 
-				replyMessage["OPERATION"] = NTS_OK
-				replyMessage["CID"] = cid
-
-				replyMessageInBytes, err := json.Marshal(replyMessage)
+				replyMessageInBytes, err := json.Marshal(MakeNTSOkPacket(cid))
 				if err != nil {
 					fmt.Println("error", err)
 					panic(err)

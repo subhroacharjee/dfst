@@ -10,7 +10,7 @@ const (
 type OPERATION uint
 
 const (
-	NOK = 0 // not ok
+	NOK OPERATION = 0 // not ok
 
 	// Need to send chunk
 	NTS    OPERATION = 1

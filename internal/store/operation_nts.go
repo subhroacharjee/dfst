@@ -6,15 +6,42 @@ import (
 
 	"github.com/subhroacharjee/dfst/internal/broadcaster"
 	"github.com/subhroacharjee/dfst/internal/logger"
-	"github.com/subhroacharjee/dfst/internal/p2p"
 )
 
-func (s *PeerStore) BroadcastNTS(cid string, csize int) bool {
-	ntsPacketMap := make(map[string]any)
-	ntsPacketMap["OPERATION"] = NTS
-	ntsPacketMap["CID"] = cid
-	ntsPacketMap["CSIZE"] = csize
+type (
+	NTSPayload struct {
+		StorePacket
 
+		CID   string `json:"cid"`
+		CSize int    `json:"csize"`
+	}
+
+	NTSOkPayload struct {
+		StorePacket
+		CID string `json:"cid"`
+	}
+)
+
+func MakeNTSPacket(cid string, csize int) NTSPayload {
+	return NTSPayload{
+		StorePacket: StorePacket{
+			Operation: NTS,
+		},
+		CID:   cid,
+		CSize: csize,
+	}
+}
+
+func MakeNTSOkPacket(cid string) NTSOkPayload {
+	return NTSOkPayload{
+		StorePacket: StorePacket{
+			Operation: NTS_OK,
+		},
+		CID: cid,
+	}
+}
+
+func (s *PeerStore) BroadcastNTS(ntsPacketMap NTSPayload) bool {
 	ntsPacket, err := json.Marshal(ntsPacketMap)
 	if err != nil {
 		logger.Error("Cant broadcast nts packet map: %v", err)
@@ -33,10 +60,11 @@ func (s *PeerStore) BroadcastNTS(cid string, csize int) bool {
 	return false
 }
 
-func (s *PeerStore) HandleNTS(peer p2p.Peer, cid string, csize int) error {
+func (s *PeerStore) HandleNTS(send func([]byte) error, payload NTSPayload) error {
 	// will use the size to check if the size is okay or not
 	// if okay will send NTS_OK back to peer
 
+	cid, csize := payload.CID, payload.CSize
 	hasSpace, err := hasEnoughSpace(s.rootPath, uint64(csize)+1024)
 	if err != nil {
 		logger.Error("Error occured during space check: %+v", err)
@@ -45,10 +73,7 @@ func (s *PeerStore) HandleNTS(peer p2p.Peer, cid string, csize int) error {
 
 	if hasSpace {
 		// Send nts ok
-		payload, err := json.Marshal(map[string]any{
-			"OPERATION": NTS_OK,
-			"CID":       cid,
-		})
+		payload, err := json.Marshal(MakeNTSOkPacket(cid))
 		if err != nil {
 			return err
 		}
@@ -60,7 +85,7 @@ func (s *PeerStore) HandleNTS(peer p2p.Peer, cid string, csize int) error {
 			return err
 		}
 
-		if err := peer.Send(packet); err != nil {
+		if err := send(packet); err != nil {
 			return err
 		}
 	}

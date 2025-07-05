@@ -19,6 +19,7 @@ type TCPTransportOpts struct {
 	ListenerAddr  string
 	Decoder       Decoder
 	HandShakeFunc HandShakeFunc
+	PeerAddr      []string
 }
 
 type TCPTransport struct {
@@ -48,6 +49,8 @@ func (t *TCPTransport) ListenAndAccept(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+
+	t.initializeDialForPeersAddr(ctx)
 
 	t.listener = ln
 	go t.startAcceptLoop(ctx)
@@ -86,6 +89,18 @@ func (t *TCPTransport) startAcceptLoop(ctx context.Context) {
 				logger.Debug("new connection made")
 				t.handleConnection(ctx, conn, false)
 			}()
+		}
+	}
+}
+
+func (t *TCPTransport) initializeDialForPeersAddr(ctx context.Context) {
+	if t.TCPTransportOpts.PeerAddr != nil {
+		for _, addr := range t.TCPTransportOpts.PeerAddr {
+			go func(ctx context.Context, addr string) {
+				if err := t.Dial(ctx, addr); err != nil {
+					logger.Error("Error conneting to peer: %s; with err: %v", addr, err)
+				}
+			}(ctx, addr)
 		}
 	}
 }

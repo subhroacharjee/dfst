@@ -61,25 +61,27 @@ func (p *PeerStore) SetPath(path string) error {
 	return nil
 }
 
-func (p *PeerStore) SetupTransport() error {
-	panic("unimplemented")
+func (p *PeerStore) setupTransport(ctx context.Context) error {
+	return p.Transport.ListenAndAccept(ctx)
 }
 
-func (p *PeerStore) Start() error {
-	if err := p.SetupTransport(); err != nil {
+func (p *PeerStore) Start(ctx context.Context) error {
+	if err := p.setupTransport(ctx); err != nil {
 		return err
 	}
 
+	go p.ConsumeAndOperate(ctx)
 	return nil
 }
 
 func (p *PeerStore) ConsumeAndOperate(ctx context.Context) {
-	msgChan := p.Transport.Subsribe().Consume()
+	sub := p.Transport.Subsribe()
 	for {
 		select {
 		case <-ctx.Done():
 			// call shutdown on message queue.
-		case msg := <-msgChan:
+			sub.Unsubscribe()
+		case msg := <-sub.Consume():
 			go p.handleMessage(&msg)
 		}
 	}

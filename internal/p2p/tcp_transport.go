@@ -14,16 +14,8 @@ import (
 	"github.com/subhroacharjee/dfst/internal/logger"
 )
 
-type TCPTransportOpts struct {
-	PeerID        string
-	ListenerAddr  string
-	Decoder       Decoder
-	HandShakeFunc HandShakeFunc
-	PeerAddr      []string
-}
-
 type TCPTransport struct {
-	TCPTransportOpts
+	TransportOpts
 	listener net.Listener
 
 	mu      sync.RWMutex
@@ -32,11 +24,11 @@ type TCPTransport struct {
 	peers map[string]Peer
 }
 
-func NewTCPTransport(opts TCPTransportOpts) Transport {
+func NewTCPTransport(opts TransportOpts) Transport {
 	return &TCPTransport{
-		TCPTransportOpts: opts,
-		peers:            make(map[string]Peer),
-		msgChan:          broadcaster.NewBroadcaster(context.Background()),
+		TransportOpts: opts,
+		peers:         make(map[string]Peer),
+		msgChan:       broadcaster.NewBroadcaster(context.Background()),
 	}
 }
 
@@ -45,7 +37,7 @@ func (t *TCPTransport) ID() string {
 }
 
 func (t *TCPTransport) ListenAndAccept(ctx context.Context) (err error) {
-	ln, err := net.Listen("tcp", t.TCPTransportOpts.ListenerAddr)
+	ln, err := net.Listen("tcp", t.TransportOpts.ListenerAddr)
 	if err != nil {
 		return err
 	}
@@ -94,8 +86,8 @@ func (t *TCPTransport) startAcceptLoop(ctx context.Context) {
 }
 
 func (t *TCPTransport) initializeDialForPeersAddr(ctx context.Context) {
-	if t.TCPTransportOpts.PeerAddr != nil {
-		for _, addr := range t.TCPTransportOpts.PeerAddr {
+	if t.TransportOpts.PeerAddr != nil {
+		for _, addr := range t.TransportOpts.PeerAddr {
 			go func(ctx context.Context, addr string) {
 				if err := t.Dial(ctx, addr); err != nil {
 					logger.Error("Error conneting to peer: %s; with err: %v", addr, err)
@@ -109,15 +101,17 @@ func (t *TCPTransport) handleConnection(ctx context.Context, conn net.Conn, outb
 	logger.Info("Connected")
 	peer := NewTCPPeer(conn, outbound)
 
-	if err := t.TCPTransportOpts.HandShakeFunc(peer); err != nil {
+	if err := t.TransportOpts.HandShakeFunc(peer); err != nil {
 		logger.Error("Handshake failed with new connection %s", peer.Conn.RemoteAddr().String())
 		peer.Close()
 		return
 	}
+	logger.Debug("Handshake is successful")
 
 	t.mu.Lock()
 	t.peers[peer.ID] = peer
 	t.mu.Unlock()
+	logger.Debug("Added to peers list")
 
 	msg := broadcaster.Message{
 		From: peer.GetID(),
@@ -132,17 +126,16 @@ func (t *TCPTransport) handleConnection(ctx context.Context, conn net.Conn, outb
 			return
 
 		default:
+			logger.Debug("Reading message from peer")
 			if err := t.Decoder.Decode(peer.Conn, &msg); err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					t.mu.Lock()
-					delete(t.peers, peer.ID)
-					t.mu.Unlock()
+				t.mu.Lock()
+				delete(t.peers, peer.ID)
+				t.mu.Unlock()
 
-					return
-				}
 				logger.Error("Error reading message from peer %s: %+v", peer.GetID(), err)
-				continue
+				return
 			}
+			logger.Debug("Reading successful")
 
 			t.msgChan.Broadcast(msg)
 		}

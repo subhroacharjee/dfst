@@ -24,3 +24,11 @@ type Transport interface {
 	Broadcast([]byte)
 	Send(string, []byte) error
 }
+
+type TransportOpts struct {
+	PeerID        string
+	ListenerAddr  string
+	Decoder       Decoder
+	HandShakeFunc HandShakeFunc
+	PeerAddr      []string
+}

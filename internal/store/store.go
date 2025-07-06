@@ -70,7 +70,7 @@ func (p *PeerStore) Start(ctx context.Context) error {
 		return err
 	}
 
-	go p.ConsumeAndOperate(ctx)
+	p.ConsumeAndOperate(ctx)
 	return nil
 }
 
@@ -82,6 +82,7 @@ func (p *PeerStore) ConsumeAndOperate(ctx context.Context) {
 			// call shutdown on message queue.
 			sub.Unsubscribe()
 		case msg := <-sub.Consume():
+			logger.Debug("New message recieved")
 			go p.handleMessage(&msg)
 		}
 	}
